@@ -11,4 +11,4 @@ Spark-lean, an interactive PySpark-based Data Cleaning Library
 
 ## Installation
 
-`pip install spark-lean`
+`pip install Spark-lean`
