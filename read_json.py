@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 import json
 import csv
 import pandas as pd
@@ -15,4 +16,8 @@ for i in range(len(df["meta"]["view"]["columns"])):
 with open('test.csv','w') as f:
     writer = csv.writer(f)
     writer.writerow(col_names)
-    writer.writerows(data)
+    for row in data:
+        try:
+            writer.writerow([str(s).encode("utf-8") for s in row])
+        except:
+            pass
