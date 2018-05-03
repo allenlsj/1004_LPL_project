@@ -1,24 +1,33 @@
-import pyspark.sql.functions as F
-from pyspark.sql.functions import monotonically_increasing_id
 import pyspark
+import numbers
 import os
 import shutil
+import numpy as np
+import string
+import warnings
+
+from functools import reduce
+
 from pyspark.sql import SQLContext
-from pyspark.sql.functions import *
+import pyspark.sql.functions as F
+from pyspark.sql.functions import when
+from pyspark.sql.functions import monotonically_increasing_id
+from math import sqrt
+from operator import add
+from pyspark.mllib.clustering import KMeans, KMeansModel
+
+from pyspark.sql.types import DoubleType
 from pyspark.ml.feature import NGram
 from pyspark.ml.feature import MinHashLSH
-from pyspark.mllib.clustering import KMeans, KMeansModel
-import numpy as np
-import warnings
+
 from pyspark.ml.linalg import Vectors
 from pyspark.sql.functions import col
 from pyspark.ml.feature import CountVectorizer
-import string
-from pyspark.ml.linalg import Vectors
-from pyspark.sql.types import DoubleType
+
 from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.feature import StandardScaler
 from pyspark.ml.feature import Normalizer
+
 class cleaner():
     def __init__(self,data,save_dir,sparkcontext=None):
         '''
@@ -35,7 +44,7 @@ class cleaner():
             self.sc = pyspark.SparkContext()
         self.ss = SQLContext(self.sc)
         try:
-            self.data=self.ss.read.csv(data)
+            self.data=self.ss.read.format('csv').options(header='true',inferschema='true').load(data)
         except Exception as e:
             self.sc.stop()
             print(e)
@@ -93,7 +102,7 @@ class cleaner():
             raise ValueError('Directory does not exist!')
         shutil.rmtree(os.path.join(self.save_dir,name))
         return
-    def detect_missing_value(self,columns='DEFAULT',keywords=["na","","n/a","N/A"]):
+    def detect_missing_value(self,columns='DEFAULT',keywords=["N/A","None"]):
         '''
         Provide a missing value diagnosis and further operations.
 
@@ -151,20 +160,17 @@ class cleaner():
             for col in null_targets:
                 self.data=self.data.where(self.data[col].isNotNull())
             for k,v in targets.items():
-                for value in v:
-                    self.remove_by_column_and_value(k,v)
+                self.remove_by_column_and_value(k,v)
             print("All deleted!")
         elif mode==2:
             self.data=self.data.na.fill('0')
             for k,v in targets.items():
-                for value in v:
-                    self.remove_by_column_and_value(k,v)
+                self.remove_by_column_and_value(k,v)
         elif mode==3:
             target=str(input('Input(to replace null):'))
             self.data=self.data.na.fill(target)
             for k,v in targets.items():
-                for value in v:
-                    self.replace_by_value(k, v, target)
+                self.replace_by_value(k, v, target)
         elif mode==4:
             for col in null_targets:
                 self.data=self.data.where(self.data[col].isNotNull())
@@ -183,7 +189,7 @@ class cleaner():
         Reset index of the input
 
         Args:
-            df: input DataFrame object
+
             drop: whether drop the original index column, default False
 
         '''
@@ -201,7 +207,7 @@ class cleaner():
         Replace value of a instance by its column name and original value
 
         Args:
-            df: input DataFrame object
+
             col_name: column name of the target instance (string)
             org_value: original value of the target instance
             new_value: replaced value
@@ -230,7 +236,7 @@ class cleaner():
         Replace value of a instance by its column name and index
 
         Args:
-            df: input DataFrame object
+
             col_name: column name of the target instance (string)
             index: index of the target instance(int)
             new_value: replaced value
@@ -302,7 +308,6 @@ class cleaner():
         '''
         Remove rows by looking at column index and value
 
-        df : dataframe
         column: str
         values: number/string
         '''
@@ -417,9 +422,9 @@ class cleaner():
                 num_of_row_with_same_value = self.ss.sql("select * from df where {} = '{}'".format(col,target_value)).count()
                 if num_of_row_with_same_value == df.count():
                     option = input("Column {} has the same value for all cells, do you want to drop it?\n\
-                    Press 1 to drop it, press 2 or other to keep it")
+                    Press 1 to drop it, press 2 or other to keep it: ".format(col))
                     if option == '1':
-                        print('The column',col,'will be dropped')
+                        print('The column',col,'is dropped')
                         currenct_list_columns = df.columns
                         currenct_list_columns.remove(col)
                         str_currenct_list_columns = ','.join(currenct_list_columns)
@@ -442,6 +447,9 @@ class cleaner():
         n_words: number of similar strings
         n_hash: number of hash functions for MinHash
         verbose:True if you want to see interactive output
+
+        Output:
+            DataFrame of Nearest Neighbours
         """
         rdd = self.data.rdd
         rdd=rdd.filter(lambda row:row[column] != None)
@@ -476,8 +484,8 @@ class cleaner():
 
         key= cv_model.transform(input_df).first()['features']
 
-        if (key.toArray().sum()) <1:
-            print("No Match! Try another input...")
+        if (key.toArray().sum()<1):
+            print("No Match! Please try another input..")
             return
 
         if verbose:
@@ -485,9 +493,10 @@ class cleaner():
 
         NNs=model.approxNearestNeighbors(result, key, n_words)
         NNs.show()
+
+        self.out=NNs
         #self.out=NNs.select('_1').distinct()
         return
-
 
     def clean_strings_removing(self, target_col,rename_to='',punc=True,number=True,others='',verbose=True):
         """
@@ -596,20 +605,19 @@ class cleaner():
         cast a column to float type
 
         Args:
-            df: input DataFrame object
 
             col_name: name of the target column (string)
         '''
 
         self.data =self.data.withColumn(col_name, self.data[col_name].cast(DoubleType()))
-
+        return
 
     def featurize(self, col_name, option, skip=False):
         '''
         featurize a specific numerical feature
 
         Args:
-            df: input DataFrame object
+
             col_name: name of the target feature (string)
             option: featurization option (int), 1 for Standarization, 2 for L2-Normalization, 3 for Min-Max transformation
             skip: whether skip a non-numerical feature, default False
@@ -678,13 +686,13 @@ class cleaner():
             print("new lower bound: {}, new upper bound: {}".format(new_min, new_max))
 
         self.data = data
-
+        return
     def featurize_all(self, option):
         '''
         featurize the whole DataFrame object
 
         Args:
-            df: input DataFrame object
+
             option: featurization option (int), 1 for Standarization, 2 for L2-Normalization, 3 for Min-Max transformation
 
         '''
@@ -695,25 +703,27 @@ class cleaner():
             types = [f.dataType for f in temp.schema.fields]
             type_list = ["IntegerType","LongType","DoubleType"]
             if str(types[0]) not in type_list:
-                warnings.warn("The column ({}) you try to featurize is {}, which is not a valid data type for this function. We skip it for you at this point".format(i, types[0]))
+                message="The column ({}) you try to featurize is {}, which is not a valid data type for this function. We skip it for you at this point".format(str(i), str(types[0]))
+                warnings.warn(message)
                 continue
             self.featurize(i, option, False)
 
+        return
 
 
 
 
 
-
-    def outlier_detect(self, col_name, error = 0.1):
+    def outlier_detect(self, col_name, error = 0.1, threshold=1.5):
         '''
         detect outliers of a numerical feature based on IQR rule
 
         Args:
-            df: input DataFrame object
+
             col_name: name of the target feature (string)
             error: the relative target precision to achieve, default is 0.1
-        Return:
+            threshold: Times of IQR, default is 1.5
+        Output(in self.out):
             DataFrame without possible outliers
         '''
         if not isinstance(col_name, str):
@@ -726,26 +736,30 @@ class cleaner():
         initial_count = self.data.count()
         quantiles = self.data.approxQuantile(col_name,[0.25, 0.75], error)
         IQR = quantiles[1] - quantiles[0]
-        low_ = quantiles[0] - 1.5*IQR
-        high_ = quantiles[1] + 1.5*IQR
+        low_ = quantiles[0] - threshold*IQR
+        high_ = quantiles[1] + threshold*IQR
 
         new_df = self.data.where((self.data[col_name] < low_ ) | (self.data[col_name] > high_ ))
         new_count = new_df.count()
 
         print("Outlier detection on {} finished!".format(col_name))
         print("There are {} instances in {}, we detect {} possible outliers, shown below:".format(initial_count, col_name, new_count))
-
+        print("-"*50)
+        print("Potential Outliers:")
         new_df.select(col_name).show()
 
-        return self.data.where((self.data[col_name] >= low_ ) | (self.data[col_name] <= high_ ))
+        self.out=self.data.where((self.data[col_name] >= low_ ) & (self.data[col_name] <= high_ ))
+        print("-"*50)
+        print("CLeaned DataFrame without potential outliers:")
+        self.out.show()
+        return
 
     def distinguish_numerical_formats(self):
         '''
         provide our estimation of data type (whether numerical) of each feature
         that may be different from the default input type
 
-        Args:
-            df: input DataFrame object
+
         '''
         print("The original data types of each feature are:")
         print(self.data.dtypes)
@@ -761,23 +775,24 @@ class cleaner():
             except:
                 print("We think {} is not a numerical type".format(col_name))
 
-
-
-
+        return
 
     def anomaly_detection_by_KMeans(self,columns,k=3,threshold=4,normalize=False):
-        """
-        Anomaly detection with Kmeans
+        '''
+        Detect anomaly combination of features through K-Means
 
-        columns: Target columns name, list of string
-        k: K-value for K-Means, int
-        threshold:
-        normalize: whether normalize the input
-        """
+        columns: list of columns to be detected
+        k: the number of clusters
+        threshold:  if (distance - mean_dsitance )> threshold*std, then point is considered to be anomaly
+        normalize: whether normalize the data before fitting into the cluster
+
+        Output(in self.out):
+            output[0]: Index of outliers (list of int)
+            output[1]: DataFrame of outliers
+        '''
         def error(point):
             center = clusters.centers[clusters.predict(point)]
             return sqrt(sum([x**2 for x in (point-center)]))
-
         def addclustercols(x):
             point = np.array(x[1:])
             center = clusters.centers[0]
@@ -793,7 +808,6 @@ class cleaner():
             #return [x[0]]+list(clcenter) + [distance]
             result = list(clcenter) + [distance]
             return [x[0],cl]+[float(x) for x in result]
-
         def featurize(df, col_name):
             df_stats = df.select(F.mean(F.col(col_name)).alias('mean'),
                                    F.stddev(F.col(col_name)).alias('std')).collect()
@@ -810,12 +824,10 @@ class cleaner():
                 df = featurize(df, i)
             data = df
             return data
-
-
-
         data = self.data
         if 'index' not in data.columns:
             print('Please create index first')
+            return
         new_cols_len = len(columns)
         number_type = ["BinaryType" "DecimalType", "DoubleType", "FloatType", "IntegerType","LongType", "ShortType"]
         all_number_type = True
@@ -826,23 +838,20 @@ class cleaner():
                 if not all_number_type:
                     print('The type of'+column+" is "+str(data.schema["_c6"].dataType))
                     print("Only numerical type is accepted ")
-                    return None,None
+                    return
                 else:
                     new_columns_name.append(column+"_cluster")
             else:
                 print(column,"doesn't exist")
-                return None,None
+                return
         new_columns_name.append('distance_to_cluster')
         origin_data = data.cache()
         data = data.select(['index']+columns)
         data = data.dropna()
         if normalize:
             data = featurize_all(data,columns)
-        data.show()
         target_numpy = data.select(columns).rdd.map(lambda x : np.array(x))
         clusters = KMeans.train(target_numpy, k, maxIterations=20)
-        self.ss.createDataFrame(data.rdd.map(lambda x: addclustercols(x))).show()
-
         result_data = data.rdd.map(lambda x: addclustercols(x)).toDF(new_columns_name)
         full_data = origin_data.join(result_data,'index',how='inner')
         stat = full_data.groupBy('cluster_number').agg(F.mean('distance_to_cluster').alias('distance_mean'),F.stddev('distance_to_cluster').alias('distance_std'))
@@ -852,19 +861,20 @@ class cleaner():
             anomaly_indices = anomaly_data.select('index')
         except:
             print("None anomaly data based on your setting")
-            return None,None
+            return
         else:
-            return [int(i['index']) for i in anomaly_indices.collect()],anomaly_data
-
-
+            self.out= ([int(i['index']) for i in anomaly_indices.collect()],anomaly_data)
+            return
 
     def train_test_split(weights,seed=None):
         """
         Test Train split
+
         weights: weights for splits, will be normalized if they don’t sum to 1
         """
         if isinstance(weights,list):
-            return self.data.randomSplit(weights, seed=seed)
+            self.out=self.data.randomSplit(weights, seed=seed)
+            return
         else:
             print('weights should be list')
-            return None,None
+            return
