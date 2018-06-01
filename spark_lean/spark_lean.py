@@ -29,32 +29,42 @@ from pyspark.ml.feature import StandardScaler
 from pyspark.ml.feature import Normalizer
 
 class cleaner():
-    def __init__(self,data,save_dir,sparkcontext=None):
+    def __init__(self,data_dir,save_dir,sparkcontext=None,data=None):
         '''
         Constructor
 
         Args:
-            data: string, path of the data file
+            data_dir: string, path of the data file
             save_dir: string, path for saving different versions of data
-
+            sparkcontext: sparkcontext, put the current sparkcontext here, if there is. A new sparkcontext will be started if there isn't.
+            data: Saprk DataFrame, use an existing dataframe if do not need to read from outside.
         '''
         if sparkcontext != None:
             self.sc = sparkcontext
         else:
             self.sc = pyspark.SparkContext()
         self.ss = SQLContext(self.sc)
-        try:
-            self.data=self.ss.read.format('csv').options(header='true',inferschema='true').load(data)
-        except Exception as e:
-            self.sc.stop()
-            print(e)
-            raise ValueError("Can't read file, sparkcontext stopped.")
+
+        if data != None and sparkcontext != None:
+            self.data=data
+        else:
+            try:
+                self.data=self.ss.read.format('csv').options(header='true',inferschema='true').load(data_dir)
+            except Exception as e:
+                self.sc.stop()
+                print(e)
+                raise ValueError("Can't read file, sparkcontext stopped.")
+
+
         self.out='Spark-lean default output'
         if not os.path.isdir(save_dir):
             raise ValueError('Directory does not exist! Create it first!')
         self.save_dir=save_dir
 
-    def initialize(self):
+    def schema(self):
+        '''
+        print the schema of the data frame.
+        '''
         self.data.printSchema()
         return
     def stop_context(self):
@@ -136,8 +146,8 @@ class cleaner():
         self.out=(null_targets,targets)
         for i in output:
             print(i)
-        for i in range(5):
-            print('\n')
+
+        print('\n'*5)
         print('-'*16)
 
         print("Please select an approach:")
@@ -449,7 +459,7 @@ class cleaner():
         verbose:True if you want to see interactive output
 
         Output:
-            DataFrame of Nearest Neighbours
+            DataFrame of input word's nearest neighbours
         """
         rdd = self.data.rdd
         rdd=rdd.filter(lambda row:row[column] != None)
