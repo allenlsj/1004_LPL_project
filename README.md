@@ -19,7 +19,7 @@ Spark-lean is a toolkit we built for cleaning and pre-processing large-scale dat
 ## Assumptions
 When we were designing this library, we made a few assumptions about the use-cases:
 * Large-scale Data
-* Data-frame structure
+* Data-frame structure (helper function converts .json to .csv file type is provided)
 * Single dataset
 
 
