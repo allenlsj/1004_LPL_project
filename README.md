@@ -31,5 +31,3 @@ Please make sure that you have Pyspark installed and have run it successfully.
 
 * start SparkContext
 * read data
-
-## Functions
