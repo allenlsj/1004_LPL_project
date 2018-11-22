@@ -25,7 +25,7 @@ When we were designing this library, we made a few assumptions about the use-cas
 
 ## How to use
 ### Dependencies
-Please make sure that you have Pyspark installed and have run it successfully.
+Please make sure that you have Pyspark installed and have run it successfully on Python 3.4+.
 
 ## Initialization
 
